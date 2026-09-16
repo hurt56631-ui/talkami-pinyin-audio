@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "ready": false,
+  "content_version": null,
+  "repository": "hurt56631-ui/talkami-pinyin-audio",
+  "message": "Run the Pinyin audio workflow after all Release assets have been uploaded."
+}

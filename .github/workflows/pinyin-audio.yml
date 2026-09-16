@@ -1,0 +1,114 @@
+name: Prepare and publish Pinyin audio
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "先 prepare_releases；音频上传完成后再 build_manifest"
+        required: true
+        type: choice
+        options:
+          - prepare_releases
+          - build_manifest
+      version:
+        description: "拼音资源版本，例如 1；发布后不要复用旧版本"
+        required: true
+        default: "1"
+        type: string
+      part_count:
+        description: "Release 分几批"
+        required: true
+        default: "3"
+        type: choice
+        options:
+          - "3"
+          - "2"
+      expected_count:
+        description: "音频总数"
+        required: true
+        default: "1338"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pinyin-audio-publish
+  cancel-in-progress: false
+
+jobs:
+  pinyin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PART_COUNT: ${{ inputs.part_count }}
+          EXPECTED_COUNT: ${{ inputs.expected_count }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "Invalid version"; exit 1; }
+          [[ "$PART_COUNT" == "2" || "$PART_COUNT" == "3" ]] || { echo "part_count must be 2 or 3"; exit 1; }
+          [[ "$EXPECTED_COUNT" =~ ^[0-9]+$ ]] || { echo "expected_count must be an integer"; exit 1; }
+          (( EXPECTED_COUNT > 0 )) || { echo "expected_count must be > 0"; exit 1; }
+
+      - name: Prepare empty Releases
+        if: ${{ inputs.action == 'prepare_releases' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PART_COUNT: ${{ inputs.part_count }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 "$PART_COUNT"); do
+            TAG="pinyin-audio-v${VERSION}-part${i}"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "$TAG already exists; keeping it"
+            else
+              gh release create "$TAG" \
+                --target "${GITHUB_SHA}" \
+                --title "Talkami Pinyin audio v${VERSION} part ${i}/${PART_COUNT}" \
+                --notes "Upload Pinyin audio files directly to this Release. Do not upload ZIP. Keep this part under 900 assets. When every part is complete, run the workflow again with action=build_manifest."
+              echo "Created $TAG"
+            fi
+          done
+
+      - name: Build manifest from Release assets
+        if: ${{ inputs.action == 'build_manifest' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build_manifest.py \
+            --version "${{ inputs.version }}" \
+            --parts "${{ inputs.part_count }}" \
+            --expected "${{ inputs.expected_count }}"
+
+      - name: Commit manifest
+        if: ${{ inputs.action == 'build_manifest' }}
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "manifest/pinyin-v${VERSION}.json" manifest/latest.json
+
+          if git diff --cached --quiet; then
+            echo "Manifest unchanged"
+            exit 0
+          fi
+
+          git commit -m "Publish Pinyin manifest v${VERSION}"
+          git push

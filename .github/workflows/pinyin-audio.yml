@@ -4,19 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "先 prepare_releases；音频上传完成后再 build_manifest"
+        description: "先 prepare_releases；上传完成后运行 build_and_publish"
         required: true
         type: choice
         options:
           - prepare_releases
-          - build_manifest
+          - build_and_publish
       version:
         description: "拼音资源版本，例如 1；发布后不要复用旧版本"
         required: true
         default: "1"
         type: string
       part_count:
-        description: "Release 分几批"
+        description: "上传区分几批"
         required: true
         default: "3"
         type: choice
@@ -39,7 +39,7 @@ concurrency:
 jobs:
   pinyin:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -60,7 +60,7 @@ jobs:
           [[ "$EXPECTED_COUNT" =~ ^[0-9]+$ ]] || { echo "expected_count must be an integer"; exit 1; }
           (( EXPECTED_COUNT > 0 )) || { echo "expected_count must be > 0"; exit 1; }
 
-      - name: Prepare empty Releases
+      - name: Prepare empty upload Releases
         if: ${{ inputs.action == 'prepare_releases' }}
         shell: bash
         env:
@@ -76,26 +76,83 @@ jobs:
             else
               gh release create "$TAG" \
                 --target "${GITHUB_SHA}" \
-                --title "Talkami Pinyin audio v${VERSION} part ${i}/${PART_COUNT}" \
-                --notes "Upload Pinyin audio files directly to this Release. Do not upload ZIP. Keep this part under 900 assets. When every part is complete, run the workflow again with action=build_manifest."
+                --title "Talkami Pinyin upload v${VERSION} part ${i}/${PART_COUNT}" \
+                --notes "SOURCE UPLOAD AREA. Upload Pinyin audio files directly here. After every part is complete, run this workflow with action=build_and_publish."
               echo "Created $TAG"
             fi
           done
 
-      - name: Build manifest from Release assets
-        if: ${{ inputs.action == 'build_manifest' }}
+      - name: Ensure final Release does not already exist
+        if: ${{ inputs.action == 'build_and_publish' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          python3 scripts/build_manifest.py \
+          FINAL_TAG="pinyin-v${VERSION}"
+          if gh release view "$FINAL_TAG" >/dev/null 2>&1; then
+            echo "Final Release $FINAL_TAG already exists. Use a new version instead of overwriting it."
+            exit 1
+          fi
+
+      - name: Download source audio from upload Releases
+        if: ${{ inputs.action == 'build_and_publish' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PART_COUNT: ${{ inputs.part_count }}
+        run: |
+          set -euo pipefail
+          rm -rf .pinyin-staging dist
+          mkdir -p .pinyin-staging dist
+
+          for i in $(seq 1 "$PART_COUNT"); do
+            TAG="pinyin-audio-v${VERSION}-part${i}"
+            DIR=".pinyin-staging/part${i}"
+            mkdir -p "$DIR"
+            gh release view "$TAG" >/dev/null
+            gh release download "$TAG" --dir "$DIR"
+            COUNT=$(find "$DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')
+            echo "$TAG: downloaded $COUNT file(s)"
+          done
+
+      - name: Validate audio and build offline ZIP packages
+        if: ${{ inputs.action == 'build_and_publish' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_packages.py \
             --version "${{ inputs.version }}" \
             --parts "${{ inputs.part_count }}" \
-            --expected "${{ inputs.expected_count }}"
+            --expected "${{ inputs.expected_count }}" \
+            --repo "${GITHUB_REPOSITORY}"
 
-      - name: Commit manifest
-        if: ${{ inputs.action == 'build_manifest' }}
+      - name: Publish final packaged Release
+        if: ${{ inputs.action == 'build_and_publish' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          EXPECTED_COUNT: ${{ inputs.expected_count }}
+        run: |
+          set -euo pipefail
+          FINAL_TAG="pinyin-v${VERSION}"
+          shopt -s nullglob
+          ASSETS=(dist/*)
+          if [ "${#ASSETS[@]}" -lt 2 ]; then
+            echo "No packaged release assets were generated"
+            exit 1
+          fi
+
+          gh release create "$FINAL_TAG" "${ASSETS[@]}" \
+            --target "${GITHUB_SHA}" \
+            --title "Talkami Pinyin offline pack v${VERSION}" \
+            --notes "Final Mini App download release. ${EXPECTED_COUNT} source audio files are validated and packaged by GitHub Actions. The pinyin-audio-v${VERSION}-part* Releases are source upload areas; clients should use this final Release and manifest."
+
+      - name: Commit generated manifests
+        if: ${{ inputs.action == 'build_and_publish' }}
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
@@ -110,5 +167,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Publish Pinyin manifest v${VERSION}"
+          git commit -m "Publish packaged Pinyin manifest v${VERSION}"
           git push

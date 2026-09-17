@@ -2,18 +2,36 @@
 
 Talkami 小程序的汉语拼读音频仓库。
 
-这个仓库只放拼音音频的发布配置和 manifest。实际音频使用 GitHub Releases 保存，不把约 120MB 音频重复提交进 Git 历史。
+## 架构
 
-## 当前发布方案
+这个仓库现在采用“源资源 -> GitHub Actions 构建 -> 最终 Release 下载”的方式，和 `talkami-learning-content` 的发布思路一致。
 
-- 仓库：`hurt56631-ui/talkami-pinyin-audio`
-- 仓库保持 Public
-- 默认音频总数：1338
-- 默认分 3 个 Release，每批建议 446 个
-- 小程序读取：`manifest/latest.json`
-- 用户可在小程序中一次性下载完整离线包；中断后按 manifest 继续下载未完成文件
+区别只在源资源存放位置：
 
-Release 标签：
+- `talkami-learning-content` 的源 JSON/封面等主要放在 Git 项目文件中，再构建 `dist/`。
+- 拼音共有 1338 个 WAV、约 120MB。为了不把大量二进制长期堆进 Git 历史，原始音频放在 3 个“上传区 Release”。
+- GitHub Actions 会把上传区音频全部拉到 runner，校验后打成 ZIP，最后发布一个真正给小程序下载的 `pinyin-vN` Release。
+- Git 仓库只保存 workflow、构建脚本和 manifest。
+
+所以用户不会下载 1338 个 Release 附件；用户只下载最终打包结果。
+
+## v1 当前上传状态
+
+已经上传完成：
+
+```text
+pinyin-audio-v1-part1   477 个
+pinyin-audio-v1-part2   428 个
+pinyin-audio-v1-part3   433 个
+--------------------------------
+总计                    1338 个
+```
+
+三批数量不需要相同，只要总数和文件校验通过即可。
+
+## 上传区和最终下载区
+
+### 源音频上传区
 
 ```text
 pinyin-audio-v1-part1
@@ -21,75 +39,37 @@ pinyin-audio-v1-part2
 pinyin-audio-v1-part3
 ```
 
-## 第一次上传音频
+这里保存原始 WAV。它们是构建输入，不是小程序完整离线包。
 
-### 1. 自动创建 3 个 Release
+### 最终 Release
 
-进入 GitHub：
+运行 Action 后自动创建：
 
-`Actions` → `Prepare and publish Pinyin audio` → `Run workflow`
+```text
+pinyin-v1
+```
+
+里面会有：
+
+```text
+pinyin-v1-part1.zip
+pinyin-v1-part2.zip
+pinyin-v1-part3.zip
+pinyin-manifest-v1.json
+```
+
+每个 ZIP 对应一批源音频。Action 会计算每个音频和每个 ZIP 的 SHA-256、文件数、原始大小、压缩后大小，并写进 manifest。
+
+## 现在怎么发布 v1
+
+进入：
+
+`Actions` -> `Prepare and publish Pinyin audio` -> `Run workflow`
 
 填写：
 
 ```text
-action: prepare_releases
-version: 1
-part_count: 3
-expected_count: 1338
-```
-
-工作流会自动创建 3 个空 Release。
-
-### 2. 上传音频
-
-进入 `Releases`，分别打开：
-
-```text
-pinyin-audio-v1-part1
-pinyin-audio-v1-part2
-pinyin-audio-v1-part3
-```
-
-把音频文件直接拖进去上传，不要打 ZIP。
-
-1338 个文件正好可以按下面分：
-
-```text
-part1: 446
-part2: 446
-part3: 446
-```
-
-也可以用其他分法，只要：
-
-- 三批总数等于 1338
-- 每一批不要超过 900 个文件
-- 三个 Release 中不能出现同名音频
-
-推荐文件名只使用：
-
-```text
-A-Z a-z 0-9 - _ .
-```
-
-例如：
-
-```text
-ba1.mp3
-ba2.mp3
-bai3.mp3
-zhong1.mp3
-guo2.mp3
-```
-
-尽量不要使用空格、`#`、中文括号等特殊字符。GitHub 上传 Release asset 时可能自动改写特殊文件名。
-
-### 3. 上传完成后生成 manifest
-
-再次运行同一个 Action：
-
-```text
-action: build_manifest
+action: build_and_publish
 version: 1
 part_count: 3
 expected_count: 1338
@@ -97,37 +77,41 @@ expected_count: 1338
 
 工作流会自动：
 
-1. 读取 3 个 Release 的全部 asset（支持每批超过 100 个，自动分页）
-2. 校验三批总数
-3. 检查重复文件名和不支持的文件类型
-4. 收集 GitHub 提供的 SHA-256 digest（可用时）
-5. 统计每个文件和全部资源的大小
-6. 生成 `manifest/pinyin-v1.json`
-7. 同步更新 `manifest/latest.json`
-8. 自动提交 manifest 到 `main`
+1. 下载三个上传区 Release 的全部音频。
+2. 检查三批总数是否等于 1338。
+3. 检查跨批重复文件名、空文件和不支持格式。
+4. 对每个音频计算 SHA-256。
+5. 分别生成 3 个 ZIP。
+6. 对 3 个 ZIP 再计算 SHA-256 和大小。
+7. 生成 `manifest/pinyin-v1.json` 和 `manifest/latest.json`。
+8. 创建最终 Release `pinyin-v1`，上传 3 个 ZIP + manifest。
+9. 把最终 manifest 提交回 `main`。
 
-## manifest 给小程序的数据
+## 小程序使用方式
 
-每个音频条目会包含类似：
+小程序只读取：
 
-```json
-{
-  "id": "part1:ba1.mp3",
-  "name": "ba1.mp3",
-  "part": 1,
-  "size": 84231,
-  "digest": "sha256:...",
-  "download_url": "https://github.com/hurt56631-ui/talkami-pinyin-audio/releases/download/pinyin-audio-v1-part1/ba1.mp3"
-}
+```text
+manifest/latest.json
 ```
 
-小程序不需要知道用户正在下载第几个 Release，只按 manifest 的 `items` 顺序下载、保存和续传即可。
+完整离线下载时按照 manifest 的 `packages` 顺序下载：
 
-## 更新音频
+```text
+part1.zip -> 解压并写 IndexedDB -> 标记 part1 完成
+part2.zip -> 解压并写 IndexedDB -> 标记 part2 完成
+part3.zip -> 解压并写 IndexedDB -> 标记 part3 完成
+```
 
-已经发布给用户的 v1 不要覆盖。
+这样如果用户完成 part1 后关闭 Telegram，下次从 part2 继续，不需要重新下载 part1。
 
-如果以后修改或增加音频，使用新的版本，例如：
+manifest 还保留每条音频的 `stream_url`，所以未下载完整离线包时也可以按单个音频在线播放。
+
+## 以后更新
+
+v1 发布后不要覆盖。
+
+修改或增加音频时创建新的上传区：
 
 ```text
 pinyin-audio-v2-part1
@@ -135,12 +119,19 @@ pinyin-audio-v2-part2
 pinyin-audio-v2-part3
 ```
 
-然后运行 `build_manifest`，`manifest/latest.json` 会切换到 v2。这样已经缓存 v1 的用户不会因为同 URL 内容变化而出现脏缓存。
+再运行：
 
-## 支持的音频扩展名
+```text
+action: build_and_publish
+version: 2
+```
+
+最终生成新的 `pinyin-v2`，`manifest/latest.json` 再切换到 v2。
+
+## 支持格式
 
 ```text
 .mp3 .m4a .aac .wav .ogg .opus
 ```
 
-生产环境建议优先使用 MP3 或 AAC/M4A，以获得较好的 Telegram Android/iOS WebView 兼容性。
+当前 v1 上传的是 WAV。ZIP 会在 GitHub Actions 中自动生成，无需再次手工上传 ZIP，也无需重新上传现有 1338 个音频。

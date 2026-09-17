@@ -1,23 +1,12 @@
-# Talkami Pinyin Audio
+# Talkami 拼读音频库
 
-Talkami 小程序的汉语拼读音频仓库。
+这个仓库只负责 **汉语拼读 / 完整音节训练**，不再承担“基础拼音”资源。
 
-## 架构
+> 重要：`a / o / e`、声母、韵母、整体认读、声调教学属于“拼音基础”；新的基础拼音仓库单独维护。这里保留 1338 个现有 WAV，作为拼读/音节训练资源库。
 
-这个仓库现在采用“源资源 -> GitHub Actions 构建 -> 最终 Release 下载”的方式，和 `talkami-learning-content` 的发布思路一致。
+## 当前资源
 
-区别只在源资源存放位置：
-
-- `talkami-learning-content` 的源 JSON/封面等主要放在 Git 项目文件中，再构建 `dist/`。
-- 拼音共有 1338 个 WAV、约 120MB。为了不把大量二进制长期堆进 Git 历史，原始音频放在 3 个“上传区 Release”。
-- GitHub Actions 会把上传区音频全部拉到 runner，校验后打成 ZIP，最后发布一个真正给小程序下载的 `pinyin-vN` Release。
-- Git 仓库只保存 workflow、构建脚本和 manifest。
-
-所以用户不会下载 1338 个 Release 附件；用户只下载最终打包结果。
-
-## v1 当前上传状态
-
-已经上传完成：
+v1 已完成：
 
 ```text
 pinyin-audio-v1-part1   477 个
@@ -27,111 +16,50 @@ pinyin-audio-v1-part3   433 个
 总计                    1338 个
 ```
 
-三批数量不需要相同，只要总数和文件校验通过即可。
-
-## 上传区和最终下载区
-
-### 源音频上传区
-
-```text
-pinyin-audio-v1-part1
-pinyin-audio-v1-part2
-pinyin-audio-v1-part3
-```
-
-这里保存原始 WAV。它们是构建输入，不是小程序完整离线包。
-
-### 最终 Release
-
-运行 Action 后自动创建：
+最终离线 Release：
 
 ```text
 pinyin-v1
+├─ pinyin-v1-part1.zip
+├─ pinyin-v1-part2.zip
+├─ pinyin-v1-part3.zip
+└─ pinyin-manifest-v1.json
 ```
 
-里面会有：
+GitHub Actions 已完成“源 Release -> 校验 -> 分包 ZIP -> manifest -> 最终 Release”的发布流程。
+
+## 小程序用途
+
+这个仓库用于“拼读/音节训练”，例如：
 
 ```text
-pinyin-v1-part1.zip
-pinyin-v1-part2.zip
-pinyin-v1-part3.zip
-pinyin-manifest-v1.json
+b + a -> ba
+m + ao -> mao
+zh + uang -> zhuang
+
+ba1.wav
+ba2.wav
+ba3.wav
+ba4.wav
 ```
 
-每个 ZIP 对应一批源音频。Action 会计算每个音频和每个 ZIP 的 SHA-256、文件数、原始大小、压缩后大小，并写进 manifest。
-
-## 现在怎么发布 v1
-
-进入：
-
-`Actions` -> `Prepare and publish Pinyin audio` -> `Run workflow`
-
-填写：
-
-```text
-action: build_and_publish
-version: 1
-part_count: 3
-expected_count: 1338
-```
-
-工作流会自动：
-
-1. 下载三个上传区 Release 的全部音频。
-2. 检查三批总数是否等于 1338。
-3. 检查跨批重复文件名、空文件和不支持格式。
-4. 对每个音频计算 SHA-256。
-5. 分别生成 3 个 ZIP。
-6. 对 3 个 ZIP 再计算 SHA-256 和大小。
-7. 生成 `manifest/pinyin-v1.json` 和 `manifest/latest.json`。
-8. 创建最终 Release `pinyin-v1`，上传 3 个 ZIP + manifest。
-9. 把最终 manifest 提交回 `main`。
-
-## 小程序使用方式
-
-小程序只读取：
+小程序完整离线下载时读取：
 
 ```text
 manifest/latest.json
 ```
 
-完整离线下载时按照 manifest 的 `packages` 顺序下载：
+然后按 `packages` 顺序下载 ZIP、逐包解压到 IndexedDB。未下载时仍可根据 manifest 中的 `stream_url` 在线播放。
+
+## 不属于本仓库的内容
+
+下面这些内容将放到新的 **基础拼音仓库**：
 
 ```text
-part1.zip -> 解压并写 IndexedDB -> 标记 part1 完成
-part2.zip -> 解压并写 IndexedDB -> 标记 part2 完成
-part3.zip -> 解压并写 IndexedDB -> 标记 part3 完成
+声母：b p m f d t n l ...
+韵母：a o e i u ü ai ei ao ou ...
+整体认读：zhi chi shi ri zi ci si yi wu yu ...
+声调：一声 / 二声 / 三声 / 四声及示范音
 ```
 
-这样如果用户完成 part1 后关闭 Telegram，下次从 part2 继续，不需要重新下载 part1。
-
-manifest 还保留每条音频的 `stream_url`，所以未下载完整离线包时也可以按单个音频在线播放。
-
-## 以后更新
-
-v1 发布后不要覆盖。
-
-修改或增加音频时创建新的上传区：
-
-```text
-pinyin-audio-v2-part1
-pinyin-audio-v2-part2
-pinyin-audio-v2-part3
-```
-
-再运行：
-
-```text
-action: build_and_publish
-version: 2
-```
-
-最终生成新的 `pinyin-v2`，`manifest/latest.json` 再切换到 v2。
-
-## 支持格式
-
-```text
-.mp3 .m4a .aac .wav .ogg .opus
-```
-
-当前 v1 上传的是 WAV。ZIP 会在 GitHub Actions 中自动生成，无需再次手工上传 ZIP，也无需重新上传现有 1338 个音频。
+基础拼音和拼读从仓库、manifest、Release 到小程序页面全部分开，避免资源和教学逻辑混用。

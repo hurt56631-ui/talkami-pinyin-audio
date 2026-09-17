@@ -1,7 +1,9 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ready": false,
-  "content_version": null,
+  "content_version": "1",
   "repository": "hurt56631-ui/talkami-pinyin-audio",
-  "message": "Run the Pinyin audio workflow after all Release assets have been uploaded."
+  "uploaded_items": 1338,
+  "uploaded_parts": [477, 428, 433],
+  "message": "Source audio upload is complete. Run build_and_publish to create pinyin-v1 ZIP packages and the final manifest."
 }
